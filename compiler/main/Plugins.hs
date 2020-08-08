@@ -24,6 +24,10 @@ module Plugins (
       -- | Typechecker plugins allow plugins to provide evidence to the
       -- typechecker.
     , TcPlugin
+      -- ** Defaulting plugins
+      -- | Defaulting plugins can add candidate types to the defaulting
+      -- mechanism.
+    , DefaultingPlugin
       -- ** Source plugins
       -- | GHC offers a number of points where plugins can access and modify its
       -- front-end (\"source\") representation. These include:
@@ -87,6 +91,9 @@ data Plugin = Plugin {
     -- being compiled, and plugins get the opportunity to modify the
     -- pipeline in a nondeterministic order.
   , tcPlugin :: TcPlugin
+    -- ^ An optional typechecker plugin, which may modify the
+    -- behaviour of the constraint solver.
+  , defaultingPlugin :: DefaultingPlugin
     -- ^ An optional typechecker plugin, which may modify the
     -- behaviour of the constraint solver.
   , holeFitPlugin :: HoleFitPlugin
@@ -189,6 +196,7 @@ instance Monoid PluginRecompile where
 
 type CorePlugin = [CommandLineOption] -> [CoreToDo] -> CoreM [CoreToDo]
 type TcPlugin = [CommandLineOption] -> Maybe TcRnTypes.TcPlugin
+type DefaultingPlugin = [CommandLineOption] -> Maybe TcRnTypes.DefaultingPlugin
 type HoleFitPlugin = [CommandLineOption] -> Maybe HoleFitPluginR
 
 purePlugin, impurePlugin, flagRecompile :: [CommandLineOption] -> IO PluginRecompile
@@ -207,6 +215,7 @@ defaultPlugin :: Plugin
 defaultPlugin = Plugin {
         installCoreToDos      = const return
       , tcPlugin              = const Nothing
+      , defaultingPlugin      = const Nothing
       , holeFitPlugin         = const Nothing
       , dynflagsPlugin        = const return
       , pluginRecompile       = impurePlugin

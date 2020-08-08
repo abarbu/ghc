@@ -1174,6 +1174,221 @@ The output is as follows:
       |     ^^^^^^^^^^^^^
 
 
+.. _defaulting-plugins:
+
+Defaulting plugins
+~~~~~~~~~~~~~~~~~~
+
+Defaulting plugins are called when ambiguous variables might otherwise cause
+errors, in the same way as the defaulting mechanism.
+
+Your defaulting plugin can propose potential ways to fill an ambiguous variable
+according to whatever criteria you would like.
+
+GHC will verify that those proposals will not lead to type errors in a context
+that you declare.
+
+Using hole-fit plugins, you can extend the behavior of valid hole fit
+suggestions to use e.g. Hoogle or other external tools to find and/or synthesize
+valid hole fits, with the same information about the typed-hole that GHC uses.
+
+There are two access points are bundled together for defining hole fit plugins,
+namely a candidate plugin and a fit plugin, for modifying the candidates to be
+checked and fits respectively.
+
+
+::
+
+    -- | A plugin for controlling defaulting.
+    type FillDefaulting =  WantedConstraints -> TcPluginM DefaultingPluginResult
+
+    data DefaultingPlugin = forall s. DefaultingPlugin
+      { dePluginInit :: TcPluginM s
+	-- ^ Initialize plugin, when entering type-checker.
+      , dePluginRun :: s -> FillDefaulting
+	-- ^ Default some types
+      , dePluginStop :: s -> TcPluginM ()
+       -- ^ Clean up after the plugin, when exiting the type-checker.
+      }
+
+    -- | Propose the following types to fill this type variable in the selected
+    -- constraints.
+    type DefaultingPluginResult = [([Type],(TcTyVar,[Ct]))]
+
+
+Your plugin gets a combination of wanted constraints which can be most easily
+broken down into simple wanted constraints with ``approximateWC``. The result is
+a ``DefaultingPluginResult`` a list of types that should be filled in for a
+given type variable that is ambiguous in a given context. GHC will check that if
+one of your proposals matches the given context and accept it. The most robust
+context to provide is just the list of all wanted constraints that mention the
+variable you are defaulting. If you leave out a constraint, your default will be
+accepted, and then result in a type checker error --- a useful way of forcing a
+default and reporting errors to the user.
+
+Defaulting plugin example
+^^^^^^^^^^^^^^^^^^^^^^^^^
+
+This plugin defaults lifted types. For example, if you would like GHC to guess
+which Nat, type level number, might fit if none is specified, you can use the
+plugin to specify a list of candidates.
+
+::
+    {-# LANGUAGE MultiParamTypeClasses, KindSignatures, FlexibleInstances, DataKinds, PatternSynonyms, StandaloneDeriving, GeneralizedNewtypeDeriving, PolyKinds #-}
+    module DefaultLifted(DefaultType,plugin) where
+    import GhcPlugins
+    import TcRnTypes
+    import Constraint
+    import TcPluginM
+    import qualified Inst
+    import InstEnv
+    import TcSimplify (approximateWC)
+    import qualified  Finder
+    import Panic      (panicDoc)
+    import Data.List
+    import TcType
+    import qualified Data.Map as M
+    import TyCoRep (Type(..))
+    import TyCon (TyCon(..))
+    import Control.Monad (liftM2)
+    import GHC.TypeLits
+
+    class DefaultType x (y :: x)
+
+    instance Eq Type where
+      (==) = eqType
+    instance Ord Type where
+      compare = nonDetCmpType
+    instance Semigroup (TcPluginM [a]) where
+      (<>) = liftM2 (++)
+    instance Monoid (TcPluginM [a]) where
+      mempty = pure mempty
+
+    plugin :: Plugin
+    plugin = defaultPlugin {
+      defaultingPlugin = install,
+      pluginRecompile = purePlugin
+      }
+
+    install args = Just $ DefaultingPlugin { dePluginInit = initialize
+					   , dePluginRun  = run
+					   , dePluginStop = stop
+					   }
+
+    pattern FoundModule :: Module -> FindResult
+    pattern FoundModule a <- Found _ a
+    fr_mod :: a -> a
+    fr_mod = id
+
+    lookupModule :: ModuleName -- ^ Name of the module
+		 -> TcPluginM Module
+    lookupModule mod_nm = do
+      hsc_env <- TcPluginM.getTopEnv
+      found_module <- TcPluginM.tcPluginIO $ Finder.findPluginModule hsc_env mod_nm
+      case found_module of
+	FoundModule h -> return (fr_mod h)
+	_          -> do
+	  found_module' <- TcPluginM.findImportedModule mod_nm $ Just $ fsLit "this"
+	  case found_module' of
+	    FoundModule h -> return (fr_mod h)
+	    _          -> panicDoc "Unable to resolve module looked up by plugin: "
+				   (ppr mod_nm)
+
+    data PluginState = PluginState { defaultClassName :: Name }
+
+    -- | Find a 'Name' in a 'Module' given an 'OccName'
+    lookupName :: Module -> OccName -> TcPluginM Name
+    lookupName md occ = lookupOrig md occ
+
+    solveDefaultType :: PluginState -> [Ct] -> TcPluginM DefaultingPluginResult
+    solveDefaultType _     []      = return []
+    solveDefaultType state wanteds = do
+      envs <- getInstEnvs
+      insts <- classInstances envs <$> tcLookupClass (defaultClassName state)
+      let defaults = foldl' (\m inst ->
+			       case is_tys inst of
+				 [matchty, replacety] ->
+				   M.insertWith (++) matchty [replacety] m) M.empty insts
+      let groups =
+	    foldl' (\m wanted ->
+		      foldl' (\m var -> M.insertWith (++) var [wanted] m)
+			     m
+			     (filter (isVariableDefaultable defaults) $ tyCoVarsOfCtList wanted))
+		   M.empty wanteds
+      M.foldMapWithKey (\var cts ->
+			case M.lookup (tyVarKind var) defaults of
+			  Nothing -> error "Bug, we already checked that this variable has a default"
+			  Just deftys -> do
+			    pure [(deftys, (var, cts))])
+	groups
+      where isVariableDefaultable defaults v = isAmbiguousTyVar v && M.member (tyVarKind v) defaults
+
+    lookupDefaultTypes :: TcPluginM PluginState
+    lookupDefaultTypes = do
+	md   <- lookupModule (mkModuleName "DefaultLifted")
+	name <- lookupName md (mkTcOcc "DefaultType")
+	pure $ PluginState { defaultClassName = name }
+
+    initialize = do
+      lookupDefaultTypes
+
+    run s ws = do
+      solveDefaultType s (ctsElts $ approximateWC False ws)
+
+    stop _ = do
+      return ()
+
+You can then compile
+
+::
+
+    {-# LANGUAGE MultiParamTypeClasses, KindSignatures, FlexibleInstances, DataKinds, PolyKinds, RankNTypes, AllowAmbiguousTypes, TypeOperators, TypeFamilies, ScopedTypeVariables #-}
+    {-# OPTIONS_GHC -fplugin DefaultLifted -fwarn-type-defaults #-}
+
+    -- Tests defaulting plugins
+    module Main where
+    import GHC.TypeLits
+    import Data.Proxy
+    import DefaultLifted
+
+    instance DefaultType Nat 4
+    instance DefaultType Nat 2
+    instance DefaultType Nat 0
+
+    q :: forall (a :: Nat). (KnownNat a) => Integer
+    q = natVal (Proxy :: Proxy a)
+
+    w :: forall (a :: Nat). (KnownNat a, 2 <= a) => Integer
+    w = natVal (Proxy :: Proxy a)
+
+    main :: IO ()
+    main = do
+      print $ q + w
+
+You will get the following warning for type defaulting
+
+.. code-block:: none
+
+    Main.hs:22:11: warning: [-Wtype-defaults (in -Wall)]
+         Defaulting the following constraint to type ‘0’
+            KnownNat a0 arising from a use of ‘q’
+         In the first argument of ‘(+)’, namely ‘q’
+          In the second argument of ‘($)’, namely ‘q + w’
+          In a stmt of a 'do' block: print $ q + w
+
+    Main.hs:22:15: warning: [-Wtype-defaults (in -Wall)]
+         Defaulting the following constraints to type ‘2’
+            ((2 <=? a0) ~ 'True)
+              arising from a use of ‘w’ at Main.hs:22:15
+            (KnownNat a0)
+              arising from a use of ‘w’ at Main.hs:22:15
+         In the second argument of ‘(+)’, namely ‘w’
+          In the second argument of ‘($)’, namely ‘q + w’
+          In a stmt of a 'do' block: print $ q + w
+
+
+And at runtime the output will be 2.
+
 
 .. _plugin_recompilation:
 

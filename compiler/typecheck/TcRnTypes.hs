@@ -77,6 +77,9 @@ module TcRnTypes(
         TcPluginM, runTcPluginM, unsafeTcPluginTcM,
         getEvBindsTcPluginM,
 
+        -- Defaulting plugin
+        DefaultingPlugin(..), FillDefaulting, DefaultingPluginResult,
+
         -- Role annotations
         RoleAnnotEnv, emptyRoleAnnotEnv, mkRoleAnnotEnv,
         lookupRoleAnnot, getRoleAnnots
@@ -592,6 +595,8 @@ data TcGblEnv
         -- although this is used for more than just that failure case.
 
         tcg_tc_plugins :: [TcPluginSolver],
+        -- ^ A list of user-defined plugins for the constraint solver.
+        tcg_de_plugins :: [FillDefaulting],
         -- ^ A list of user-defined plugins for the constraint solver.
         tcg_hf_plugins :: [HoleFitPlugin],
         -- ^ A list of user-defined plugins for hole fit suggestions.
@@ -1700,6 +1705,23 @@ data TcPluginResult
     -- The second field contains new work, that should be processed by
     -- the constraint solver.
 
+-- | A plugin for controlling defaulting.
+type FillDefaulting =  WantedConstraints -> TcPluginM DefaultingPluginResult
+
+data DefaultingPlugin = forall s. DefaultingPlugin
+  { dePluginInit :: TcPluginM s
+    -- ^ Initialize plugin, when entering type-checker.
+  , dePluginRun :: s -> FillDefaulting
+    -- ^ Default some types
+  , dePluginStop :: s -> TcPluginM ()
+   -- ^ Clean up after the plugin, when exiting the type-checker.
+  }
+
+-- | Propose the following types to fill this type variable in the selected
+-- constraints.
+type DefaultingPluginResult = [([Type],(TcTyVar,[Ct]))]
+
+
 {- *********************************************************************
 *                                                                      *
                         Role annotations
@@ -1726,3 +1748,4 @@ lookupRoleAnnot = lookupNameEnv
 getRoleAnnots :: [Name] -> RoleAnnotEnv -> [LRoleAnnotDecl GhcRn]
 getRoleAnnots bndrs role_env
   = mapMaybe (lookupRoleAnnot role_env) bndrs
+

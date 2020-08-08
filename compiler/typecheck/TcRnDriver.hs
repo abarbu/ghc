@@ -169,7 +169,9 @@ tcRnModule hsc_env mod_sum save_rn_syntax
               (text "Renamer/typechecker"<+>brackets (ppr this_mod))
               (const ()) $
    initTc hsc_env hsc_src save_rn_syntax this_mod real_loc $
-          withTcPlugins hsc_env $ withHoleFitPlugins hsc_env $
+          withTcPlugins hsc_env $
+          withDefaultingPlugins hsc_env $
+          withHoleFitPlugins hsc_env $
 
           tcRnModuleTcRnM hsc_env mod_sum parsedModule pair
 
@@ -1845,7 +1847,8 @@ runTcInteractive :: HscEnv -> TcRn a -> IO (Messages, Maybe a)
 -- Initialise the tcg_inst_env with instances from all home modules.
 -- This mimics the more selective call to hptInstances in tcRnImports
 runTcInteractive hsc_env thing_inside
-  = initTcInteractive hsc_env $ withTcPlugins hsc_env $ withHoleFitPlugins hsc_env $
+  = initTcInteractive hsc_env $ withTcPlugins hsc_env $
+    withDefaultingPlugins hsc_env $ withHoleFitPlugins hsc_env $
     do { traceTc "setInteractiveContext" $
             vcat [ text "ic_tythings:" <+> vcat (map ppr (ic_tythings icxt))
                  , text "ic_insts:" <+> vcat (map (pprBndr LetBind . instanceDFunId) ic_insts)
@@ -2886,6 +2889,28 @@ withTcPlugins hsc_env m =
 getTcPlugins :: DynFlags -> [TcRnMonad.TcPlugin]
 getTcPlugins dflags = catMaybes $ mapPlugins dflags (\p args -> tcPlugin p args)
 
+withDefaultingPlugins :: HscEnv -> TcM a -> TcM a
+withDefaultingPlugins hsc_env m =
+  do let plugins = getDePlugins (hsc_dflags hsc_env)
+     case plugins of
+       [] -> m  -- Common fast case
+       _  -> do ev_binds_var <- newTcEvBinds
+                (plugins,stops) <- unzip `fmap` mapM (startPlugin ev_binds_var) plugins
+                -- This ensures that tcPluginStop is called even if a type
+                -- error occurs during compilation (Fix of #10078)
+                eitherRes <- tryM $ do
+                  updGblEnv (\e -> e { tcg_de_plugins = plugins }) m
+                mapM_ (flip runTcPluginM ev_binds_var) stops
+                case eitherRes of
+                  Left _ -> failM
+                  Right res -> return res
+  where
+  startPlugin ev_binds_var (DefaultingPlugin start fill stop) =
+    do s <- runTcPluginM start ev_binds_var
+       return (fill s, stop s)
+
+getDePlugins :: DynFlags -> [TcRnMonad.DefaultingPlugin]
+getDePlugins dflags = catMaybes $ mapPlugins dflags (\p args -> defaultingPlugin p args)
 
 withHoleFitPlugins :: HscEnv -> TcM a -> TcM a
 withHoleFitPlugins hsc_env m =

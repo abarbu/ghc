@@ -134,3 +134,11 @@ T16260:
 .PHONY: HoleFitPlugin
 HoleFitPlugin:
 	"$(TEST_HC)" $(TEST_HC_OPTS) $(ghcPluginWayFlags) -v0 HoleFitPlugin.hs -package-db hole-fit-plugin/pkg.hole-fit-plugin/local.package.conf
+
+.PHONY: test-defaulting-plugin
+test-defaulting-plugin:
+	"$(TEST_HC)" $(TEST_HC_OPTS) $(ghcPluginWayFlags) --make -v0 test-defaulting-plugin.hs -package-db defaulting-plugin/pkg.test-defaulting-plugin/local.package.conf
+
+.PHONY: test-defaulting-plugin-fail
+test-defaulting-plugin-fail:
+	-"$(TEST_HC)" $(TEST_HC_OPTS) $(ghcPluginWayFlags) --make -v0 test-defaulting-plugin-fail.hs -package-db defaulting-plugin/pkg.test-defaulting-plugin-fail/local.package.conf

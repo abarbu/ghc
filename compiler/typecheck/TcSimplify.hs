@@ -2555,6 +2555,9 @@ subtle than we'd realised at first.  See #14584.
 *********************************************************************************
 -}
 
+getDePlugins :: TcS [FillDefaulting]
+getDePlugins = do { tcg_env <- TcS.getGblEnv; return (tcg_de_plugins tcg_env) }
+
 applyDefaultingRules :: WantedConstraints -> TcS Bool
 -- True <=> I did some defaulting, by unifying a meta-tyvar
 -- Input WantedConstraints are not necessarily zonked
@@ -2565,6 +2568,26 @@ applyDefaultingRules wanteds
   | otherwise
   = do { info@(default_tys, _) <- getDefaultInfo
        ; wanteds               <- TcS.zonkWC wanteds
+
+       ; plugins <- getDePlugins
+
+       -- TODO Keep track of which variables were already defaulted, don't do it twice!
+       ; plugin_defaulted <- if null plugins then return [] else
+           do {
+             ; traceTcS "defaultingPlugins {" (ppr wanteds)
+             ; defaultedGroups <-
+                 mapM (\p -> do { groups <- runTcPluginTcS (p wanteds)
+                               ; defaultedGroups <-
+                                   filterM (\(tys,group) -> disambigGroup tys group) groups
+                               ; traceTcS "defaultingPlugin " $ ppr defaultedGroups
+                               ; case defaultedGroups of
+                                   [] -> return False
+                                   _  -> return True
+                               })
+                 plugins
+             ; traceTcS "defaultingPlugins }" (ppr defaultedGroups)
+             ; return defaultedGroups
+             }
 
        ; let groups = findDefaultableGroups info wanteds
 
@@ -2577,7 +2600,7 @@ applyDefaultingRules wanteds
 
        ; traceTcS "applyDefaultingRules }" (ppr something_happeneds)
 
-       ; return (or something_happeneds) }
+       ; return $ or something_happeneds || or plugin_defaulted }
 
 findDefaultableGroups
     :: ( [Type]
@@ -2668,7 +2691,7 @@ disambigGroup (default_ty:default_tys) group@(the_tv, wanteds)
       = do { lcl_env <- TcS.getLclEnv
            ; tc_lvl <- TcS.getTcLevel
            ; let loc = mkGivenLoc tc_lvl UnkSkol lcl_env
-           ; wanted_evs <- mapM (newWantedEvVarNC loc . substTy subst . ctPred)
+           ; wanted_evs <- mapM (newWantedNC loc . substTy subst . ctPred)
                                 wanteds
            ; fmap isEmptyWC $
              solveSimpleWanteds $ listToBag $

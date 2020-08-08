@@ -227,3 +227,15 @@ test('test-hooks-plugin',
       ],
      compile_and_run,
      ['-package-db hooks-plugin/pkg.hooks-plugin/local.package.conf '+ config.plugin_way_flags])
+
+test('test-defaulting-plugin',
+     [extra_files(['defaulting-plugin/']),
+      only_ways([config.ghc_plugin_way]),
+      pre_cmd('$MAKE -s --no-print-directory -C defaulting-plugin package.test-defaulting-plugin TOP={top}')],
+     makefile_test, [])
+
+test('test-defaulting-plugin-fail',
+     [extra_files(['defaulting-plugin/']),
+      only_ways([config.ghc_plugin_way]),
+      pre_cmd('$MAKE -s --no-print-directory -C defaulting-plugin package.test-defaulting-plugin-fail TOP={top}')],
+     makefile_test, [])
