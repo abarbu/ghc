@@ -1150,7 +1150,7 @@
 #define RTS_LIBGCC_SYMBOLS
 #endif
 
-#if !defined(mingw32_HOST_OS) && !defined(DYNAMIC) && (defined(_FORTIFY_SOURCE) || defined(__SSP__))
+#if 0
 #define RTS_SSP_SYMBOLS                                \
       SymI_NeedsProto(__stack_chk_guard)               \
       SymI_NeedsProto(__stack_chk_fail)
