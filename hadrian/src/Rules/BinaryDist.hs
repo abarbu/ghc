@@ -121,7 +121,7 @@ bindistRules = do
         copyDirectory (ghcBuildDir -/- "bin") bindistFilesDir
         copyDirectory (ghcBuildDir -/- "lib") bindistFilesDir
         copyDirectory (rtsIncludeDir)         bindistFilesDir
-        need ["docs"]
+        -- need ["docs"]
         -- TODO: we should only embed the docs that have been generated
         -- depending on the current settings (flavours' "ghcDocs" field and
         -- "--docs=.." command-line flag)
