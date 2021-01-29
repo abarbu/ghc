@@ -38,6 +38,8 @@ test('derefnull',
       when(platform('i386-apple-darwin'), [ignore_stderr, exit_code(139)]),
       when(platform('x86_64-apple-darwin'), [ignore_stderr, exit_code(139)]),
       when(opsys('mingw32'), [ignore_stderr, exit_code(11)]),
+      # ThreadSanitizer changes the output
+      when(have_thread_sanitizer(), skip),
       # since these test are supposed to crash the
       # profile report will be empty always.
       # so disable the check for profiling
@@ -60,6 +62,8 @@ test('divbyzero',
       # The output under OS X is too unstable to readily compare
       when(platform('i386-apple-darwin'), [ignore_stderr, exit_code(136)]),
       when(platform('x86_64-apple-darwin'), [ignore_stderr, exit_code(136)]),
+      # ThreadSanitizer changes the output
+      when(have_thread_sanitizer(), skip),
       # since these test are supposed to crash the
       # profile report will be empty always.
       # so disable the check for profiling
@@ -403,7 +407,7 @@ test('T16514', unless(opsys('mingw32'), skip), compile_and_run, ['T16514_c.cpp -
 test('test-zeroongc', extra_run_opts('-DZ'), compile_and_run, ['-debug'])
 
 test('T13676',
-     [when(opsys('darwin') or opsys('mingw32'), expect_broken(17447)),
+     [when(opsys('mingw32'), expect_broken(17447)),
       extra_files(['T13676.hs'])],
      ghci_script, ['T13676.script'])
 

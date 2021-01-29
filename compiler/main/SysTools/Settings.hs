@@ -119,6 +119,8 @@ initSettings top_dir = do
   windres_path <- getToolSetting "windres command"
   libtool_path <- getToolSetting "libtool command"
   ar_path <- getToolSetting "ar command"
+  otool_path <- getToolSetting "otool command"
+  install_name_tool_path <- getToolSetting "install_name_tool command"
   ranlib_path <- getToolSetting "ranlib command"
 
   -- TODO this side-effect doesn't belong here. Reading and parsing the settings
@@ -141,6 +143,8 @@ initSettings top_dir = do
         as_args  = map Option cc_args
         ld_prog  = cc_prog
         ld_args  = map Option (cc_args ++ words cc_link_args_str)
+  ld_r_prog <- getToolSetting "Merge objects command"
+  ld_r_args <- getSetting "Merge objects flags"
 
   llvmTarget <- getSetting "LLVM target"
 
@@ -202,11 +206,14 @@ initSettings top_dir = do
       , toolSettings_pgm_c   = cc_prog
       , toolSettings_pgm_a   = (as_prog, as_args)
       , toolSettings_pgm_l   = (ld_prog, ld_args)
+      , toolSettings_pgm_lm  = (ld_r_prog, map Option $ words ld_r_args)
       , toolSettings_pgm_dll = (mkdll_prog,mkdll_args)
       , toolSettings_pgm_T   = touch_path
       , toolSettings_pgm_windres = windres_path
       , toolSettings_pgm_libtool = libtool_path
       , toolSettings_pgm_ar = ar_path
+      , toolSettings_pgm_otool = otool_path
+      , toolSettings_pgm_install_name_tool = install_name_tool_path
       , toolSettings_pgm_ranlib = ranlib_path
       , toolSettings_pgm_lo  = (lo_prog,[])
       , toolSettings_pgm_lc  = (lc_prog,[])
@@ -220,6 +227,7 @@ initSettings top_dir = do
       , toolSettings_opt_cxx     = cxx_args
       , toolSettings_opt_a       = []
       , toolSettings_opt_l       = []
+      , toolSettings_opt_lm      = []
       , toolSettings_opt_windres = []
       , toolSettings_opt_lcc     = []
       , toolSettings_opt_lo      = []

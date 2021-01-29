@@ -52,7 +52,7 @@ stages:
     expire_in: 1 year
   only:
     variables:
-      - $RELEASE == "yes"
+      - $RELEASE_JOB == "yes"
 
 ############################################################
 # Runner Tags
@@ -467,61 +467,61 @@ validate-x86_64-darwin:
       - toolchain
 
 #################################
-# aarch64-linux-deb9
+# aarch64-linux-deb10
 #################################
 
-.build-aarch64-linux-deb9:
+.build-aarch64-linux-deb10:
   extends: .validate-linux
   stage: full-build
-  image: "registry.gitlab.haskell.org/ghc/ci-images/aarch64-linux-deb9:$DOCKER_REV"
+  image: "registry.gitlab.haskell.org/ghc/ci-images/aarch64-linux-deb10:$DOCKER_REV"
   allow_failure: true
   variables:
-    TEST_ENV: "aarch64-linux-deb9"
-    BIN_DIST_PREP_TAR_COMP: "ghc-aarch64-linux-deb9.tar.xz"
+    TEST_ENV: "aarch64-linux-deb10"
+    BIN_DIST_PREP_TAR_COMP: "ghc-aarch64-linux-deb10.tar.xz"
   cache:
-    key: linux-aarch64-deb9
+    key: linux-aarch64-deb10
   tags:
     - aarch64-linux
 
-validate-aarch64-linux-deb9:
-  extends: .build-aarch64-linux-deb9
+validate-aarch64-linux-deb10:
+  extends: .build-aarch64-linux-deb10
   artifacts:
     when: always
     expire_in: 2 week
 
-nightly-aarch64-linux-deb9:
+nightly-aarch64-linux-deb10:
   <<: *nightly
-  extends: .build-aarch64-linux-deb9
+  extends: .build-aarch64-linux-deb10
   variables:
     TEST_TYPE: slowtest
 
 #################################
-# armv7-linux-deb9
+# armv7-linux-deb10
 #################################
 
-.build-armv7-linux-deb9:
+.build-armv7-linux-deb10:
   extends: .validate-linux
   stage: full-build
-  image: "registry.gitlab.haskell.org/ghc/ci-images/armv7-linux-deb9:$DOCKER_REV"
+  image: "registry.gitlab.haskell.org/ghc/ci-images/armv7-linux-deb10:$DOCKER_REV"
   variables:
-    TEST_ENV: "armv7-linux-deb9"
-    BIN_DIST_PREP_TAR_COMP: "ghc-armv7-linux-deb9.tar.xz"
+    TEST_ENV: "armv7-linux-deb10"
+    BIN_DIST_PREP_TAR_COMP: "ghc-armv7-linux-deb10.tar.xz"
     CONFIGURE_ARGS: "--host=armv7-linux-gnueabihf --build=armv7-linux-gnueabihf --target=armv7-linux-gnueabihf"
   cache:
-    key: linux-armv7-deb9
+    key: linux-armv7-deb10
   tags:
     - armv7-linux
 
-validate-armv7-linux-deb9:
-  extends: .build-armv7-linux-deb9
+validate-armv7-linux-deb10:
+  extends: .build-armv7-linux-deb10
   allow_failure: true
   artifacts:
     when: always
     expire_in: 2 week
 
-nightly-armv7-linux-deb9:
+nightly-armv7-linux-deb10:
   <<: *nightly
-  extends: .build-armv7-linux-deb9
+  extends: .build-armv7-linux-deb10
   variables:
     TEST_TYPE: slowtest
 
@@ -634,6 +634,25 @@ nightly-x86_64-linux-deb9-integer-simple:
     INTEGER_LIBRARY: integer-simple
     TEST_ENV: "x86_64-linux-deb9-integer-simple"
     TEST_TYPE: slowtest
+
+.build-x86_64-linux-deb9-tsan:
+  extends: .validate-linux-hadrian
+  stage: full-build
+  variables:
+    TEST_ENV: "x86_64-linux-deb9-tsan"
+    BUILD_FLAVOUR: "thread-sanitizer"
+    TSAN_OPTIONS: "suppressions=$CI_PROJECT_DIR/rts/.tsan-suppressions"
+    # Haddock is large enough to make TSAN choke without massive quantities of
+    # memory.
+    HADRIAN_ARGS: "--docs=none"
+
+nightly-x86_64-linux-deb9-tsan:
+  <<: *nightly
+  extends: .build-x86_64-linux-deb9-tsan
+
+validate-x86_64-linux-deb9-tsan:
+  extends: .build-x86_64-linux-deb9-tsan
+  when: manual
 
 validate-x86_64-linux-deb9-dwarf:
   extends: .build-x86_64-linux-deb9

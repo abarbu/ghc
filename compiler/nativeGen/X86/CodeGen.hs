@@ -292,11 +292,11 @@ we construct as a separate data type and the actual control flow graph in the co
 Instead we now return the new basic block if a statement causes a change
 in the current block and use the block for all following statements.
 
-For this reason genCCall is also split into two parts.
-One for calls which *won't* change the basic blocks in
-which successive instructions will be placed.
-A different one for calls which *are* known to change the
-basic block.
+For this reason genCCall is also split into two parts.  One for calls which
+*won't* change the basic blocks in which successive instructions will be
+placed (since they only evaluate CmmExpr, which can only contain MachOps, which
+cannot introduce basic blocks in their lowerings).  A different one for calls
+which *are* known to change the basic block.
 
 -}
 
@@ -1037,6 +1037,9 @@ getRegister' _ is32Bit (CmmMachOp mop [x, y]) = do -- dyadic MachOps
           tmp.  This is likely to be better, because the reg alloc can
           eliminate this reg->reg move here (it won't eliminate the other one,
           because the move is into the fixed %ecx).
+      * in the case of C calls the use of ecx here can interfere with arguments.
+        We avoid this with the hack described in Note [Evaluate C-call
+        arguments before placing in destination registers]
     -}
     shift_code width instr x y{-amount-} = do
         x_code <- getAnyReg x
@@ -1801,6 +1804,35 @@ I386: First, we have to ensure that the condition
 codes are set according to the supplied comparison operation.
 -}
 
+{-  Note [64-bit integer comparisons on 32-bit]
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+    When doing these comparisons there are 2 kinds of
+    comparisons.
+
+    * Comparison for equality (or lack thereof)
+
+    We use xor to check if high/low bits are
+    equal. Then combine the results using or and
+    perform a single conditional jump based on the
+    result.
+
+    * Other comparisons:
+
+    We map all other comparisons to the >= operation.
+    Why? Because it's easy to encode it with a single
+    conditional jump.
+
+    We do this by first computing [r1_lo - r2_lo]
+    and use the carry flag to compute
+    [r1_high - r2_high - CF].
+
+    At which point if r1 >= r2 then the result will be
+    positive. Otherwise negative so we can branch on this
+    condition.
+
+-}
+
 
 genCondBranch
     :: BlockId      -- the source of the jump
@@ -1818,22 +1850,63 @@ genCondBranch' :: Bool -> BlockId -> BlockId -> BlockId -> CmmExpr
                -> NatM InstrBlock
 
 -- 64-bit integer comparisons on 32-bit
+-- See Note [64-bit integer comparisons on 32-bit]
 genCondBranch' is32Bit _bid true false (CmmMachOp mop [e1,e2])
   | is32Bit, Just W64 <- maybeIntComparison mop = do
-  ChildCode64 code1 r1_lo <- iselExpr64 e1
-  ChildCode64 code2 r2_lo <- iselExpr64 e2
-  let r1_hi = getHiVRegFromLo r1_lo
-      r2_hi = getHiVRegFromLo r2_lo
-      cond = machOpToCond mop
-      Just cond' = maybeFlipCond cond
-  --TODO: Update CFG for x86
-  let code = code1 `appOL` code2 `appOL` toOL [
-        CMP II32 (OpReg r2_hi) (OpReg r1_hi),
-        JXX cond true,
-        JXX cond' false,
-        CMP II32 (OpReg r2_lo) (OpReg r1_lo),
-        JXX cond true] `appOL` genBranch false
-  return code
+
+  -- The resulting registers here are both the lower part of
+  -- the register as well as a way to get at the higher part.
+  ChildCode64 code1 r1 <- iselExpr64 e1
+  ChildCode64 code2 r2 <- iselExpr64 e2
+  let cond = machOpToCond mop :: Cond
+
+  let cmpCode = intComparison cond true false r1 r2
+  return $ code1 `appOL` code2 `appOL` cmpCode
+
+  where
+    intComparison :: Cond -> BlockId -> BlockId -> Reg -> Reg -> InstrBlock
+    intComparison cond true false r1_lo r2_lo =
+      case cond of
+        -- Impossible results of machOpToCond
+        ALWAYS  -> panic "impossible"
+        NEG     -> panic "impossible"
+        POS     -> panic "impossible"
+        CARRY   -> panic "impossible"
+        OFLO    -> panic "impossible"
+        PARITY  -> panic "impossible"
+        NOTPARITY -> panic "impossible"
+        -- Special case #1 x == y and x != y
+        EQQ -> cmpExact
+        NE  -> cmpExact
+        -- [x >= y]
+        GE  -> cmpGE
+        GEU -> cmpGE
+        -- [x >  y] <==> ![y >= x]
+        GTT -> intComparison GE  false true r2_lo r1_lo
+        GU  -> intComparison GEU false true r2_lo r1_lo
+        -- [x <= y] <==> [y >= x]
+        LE  -> intComparison GE  true false r2_lo r1_lo
+        LEU -> intComparison GEU true false r2_lo r1_lo
+        -- [x <  y] <==> ![x >= x]
+        LTT -> intComparison GE  false true r1_lo r2_lo
+        LU  -> intComparison GEU false true r1_lo r2_lo
+      where
+        r1_hi = getHiVRegFromLo r1_lo
+        r2_hi = getHiVRegFromLo r2_lo
+        cmpExact :: OrdList Instr
+        cmpExact =
+          toOL
+            [ XOR II32 (OpReg r2_hi) (OpReg r1_hi)
+            , XOR II32 (OpReg r2_lo) (OpReg r1_lo)
+            , OR  II32 (OpReg r1_hi)  (OpReg r1_lo)
+            , JXX cond true
+            , JXX ALWAYS false
+            ]
+        cmpGE = toOL
+            [ CMP II32 (OpReg r2_lo) (OpReg r1_lo)
+            , SBB II32 (OpReg r2_hi) (OpReg r1_hi)
+            , JXX cond true
+            , JXX ALWAYS false ]
 
 genCondBranch' _ bid id false bool = do
   CondCode is_float cond cond_code <- getCondCode bool
@@ -2614,9 +2687,12 @@ genCCall' _ is32Bit target dest_regs args bid = do
                return code
         _ -> panic "genCCall: Wrong number of arguments/results for mul2"
 
-    _ -> if is32Bit
-         then genCCall32' dflags target dest_regs args
-         else genCCall64' dflags target dest_regs args
+    _ -> do
+        (instrs0, args') <- evalArgs bid args
+        instrs1 <- if is32Bit
+          then genCCall32' dflags target dest_regs args'
+          else genCCall64' dflags target dest_regs args'
+        return (instrs0 `appOL` instrs1)
 
   where divOp1 platform signed width results [arg_x, arg_y]
             = divOp platform signed width results Nothing arg_x arg_y
@@ -2678,6 +2754,83 @@ genCCall' _ is32Bit target dest_regs args bid = do
                  return code
         addSubIntC _ _ _ _ _ _ _ _
             = panic "genCCall: Wrong number of arguments/results for addSubIntC"
+
+{-
+Note [Evaluate C-call arguments before placing in destination registers]
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+When producing code for C calls we must take care when placing arguments
+in their final registers. Specifically, we must ensure that temporary register
+usage due to evaluation of one argument does not clobber a register in which we
+already placed a previous argument (e.g. as the code generation logic for
+MO_Shl can clobber %rcx due to x86 instruction limitations).
+
+This is precisely what happened in #18527. Consider this C--:
+
+    (result::I64) = call "ccall" doSomething(_s2hp::I64, 2244, _s2hq::I64, _s2hw::I64 | (1 << _s2hz::I64));
+
+Here we are calling the C function `doSomething` with three arguments, the last
+involving a non-trivial expression involving MO_Shl. In this case the NCG could
+naively generate the following assembly (where $tmp denotes some temporary
+register and $argN denotes the register for argument N, as dictated by the
+platform's calling convention):
+
+    mov _s2hp, $arg1   # place first argument
+    mov _s2hq, $arg2   # place second argument
+
+    # Compute 1 << _s2hz
+    mov _s2hz, %rcx
+    shl %cl, $tmp
+
+    # Compute (_s2hw | (1 << _s2hz))
+    mov _s2hw, $arg3
+    or $tmp, $arg3
+
+    # Perform the call
+    call func
+
+This code is outright broken on Windows which assigns $arg1 to %rcx. This means
+that the evaluation of the last argument clobbers the first argument.
+
+To avoid this we use a rather awful hack: when producing code for a C call with
+at least one non-trivial argument, we first evaluate all of the arguments into
+local registers before moving them into their final calling-convention-defined
+homes.  This is performed by 'evalArgs'. Here we define "non-trivial" to be an
+expression which might contain a MachOp since these are the only cases which
+might clobber registers. Furthermore, we use a conservative approximation of
+this condition (only looking at the top-level of CmmExprs) to avoid spending
+too much effort trying to decide whether we want to take the fast path.
+
+Note that this hack *also* applies to calls to out-of-line PrimTargets (which
+are lowered via a C call) since outOfLineCmmOp produces the call via
+(stmtToInstrs (CmmUnsafeForeignCall ...)), which will ultimately end up
+back in genCCall{32,64}.
+-}
+
+-- | See Note [Evaluate C-call arguments before placing in destination registers]
+evalArgs :: BlockId -> [CmmActual] -> NatM (InstrBlock, [CmmActual])
+evalArgs bid actuals
+  | any mightContainMachOp actuals = do
+      regs_blks <- mapM evalArg actuals
+      return (concatOL $ map fst regs_blks, map snd regs_blks)
+  | otherwise = return (nilOL, actuals)
+  where
+    mightContainMachOp (CmmReg _)      = False
+    mightContainMachOp (CmmRegOff _ _) = False
+    mightContainMachOp (CmmLit _)      = False
+    mightContainMachOp _               = True
+
+    evalArg :: CmmActual -> NatM (InstrBlock, CmmExpr)
+    evalArg actual = do
+        dflags <- getDynFlags
+        lreg <- newLocalReg $ cmmExprType dflags actual
+        (instrs, bid1) <- stmtToInstrs bid $ CmmAssign (CmmLocal lreg) actual
+        -- The above assignment shouldn't change the current block
+        MASSERT(isNothing bid1)
+        return (instrs, CmmReg $ CmmLocal lreg)
+
+    newLocalReg :: CmmType -> NatM LocalReg
+    newLocalReg ty = LocalReg <$> getUniqueM <*> pure ty
 
 -- Note [DIV/IDIV for bytes]
 --

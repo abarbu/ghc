@@ -97,19 +97,21 @@ executable hadrian
                        , Settings.Builders.HsCpp
                        , Settings.Builders.Ld
                        , Settings.Builders.Make
+                       , Settings.Builders.MergeObjects
                        , Settings.Builders.RunTest
                        , Settings.Builders.Xelatex
                        , Settings.Default
                        , Settings.Flavours.Benchmark
                        , Settings.Flavours.Common
                        , Settings.Flavours.Development
+                       , Settings.Flavours.GhcInGhci
                        , Settings.Flavours.Llvm
                        , Settings.Flavours.Performance
                        , Settings.Flavours.Profiled
                        , Settings.Flavours.Quick
                        , Settings.Flavours.QuickCross
                        , Settings.Flavours.Quickest
-                       , Settings.Flavours.GhcInGhci
+                       , Settings.Flavours.ThreadSanitizer
                        , Settings.Flavours.Validate
                        , Settings.Packages
                        , Settings.Parser
@@ -145,7 +147,7 @@ executable hadrian
                        , transformers         >= 0.4     && < 0.6
                        , unordered-containers >= 0.2.1   && < 0.3
     build-tools:         alex  >= 3.1
-                       , happy >= 1.19.10
+                       , happy >= 1.19.10 && < 1.20
     ghc-options:       -Wall
                        -Wincomplete-record-updates
                        -Wredundant-constraints

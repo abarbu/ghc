@@ -382,7 +382,56 @@ compileEmptyStub dflags hsc_env basename location mod_name = do
 
 -- ---------------------------------------------------------------------------
 -- Link
-
+--
+-- Note [Dynamic linking on macOS]
+-- ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+--
+-- Since macOS Sierra (10.14), the dynamic system linker enforces
+-- a limit on the Load Commands.  Specifically the Load Command Size
+-- Limit is at 32K (32768).  The Load Commands contain the install
+-- name, dependencies, runpaths, and a few other commands.  We however
+-- only have control over the install name, dependencies and runpaths.
+--
+-- The install name is the name by which this library will be
+-- referenced.  This is such that we do not need to bake in the full
+-- absolute location of the library, and can move the library around.
+--
+-- The dependency commands contain the install names from of referenced
+-- libraries.  Thus if a libraries install name is @rpath/libHS...dylib,
+-- that will end up as the dependency.
+--
+-- Finally we have the runpaths, which informs the linker about the
+-- directories to search for the referenced dependencies.
+--
+-- The system linker can do recursive linking, however using only the
+-- direct dependencies conflicts with ghc's ability to inline across
+-- packages, and as such would end up with unresolved symbols.
+--
+-- Thus we will pass the full dependency closure to the linker, and then
+-- ask the linker to remove any unused dynamic libraries (-dead_strip_dylibs).
+--
+-- We still need to add the relevant runpaths, for the dynamic linker to
+-- lookup the referenced libraries though.  The linker (ld64) does not
+-- have any option to dead strip runpaths; which makes sense as runpaths
+-- can be used for dependencies of dependencies as well.
+--
+-- The solution we then take in GHC is to not pass any runpaths to the
+-- linker at link time, but inject them after the linking.  For this to
+-- work we'll need to ask the linker to create enough space in the header
+-- to add more runpaths after the linking (-headerpad 8000).
+--
+-- After the library has been linked by $LD (usually ld64), we will use
+-- otool to inspect the libraries left over after dead stripping, compute
+-- the relevant runpaths, and inject them into the linked product using
+-- the install_name_tool command.
+--
+-- This strategy should produce the smallest possible set of load commands
+-- while still retaining some form of relocatability via runpaths.
+--
+-- The only way I can see to reduce the load command size further would be
+-- by shortening the library names, or start putting libraries into the same
+-- folders, such that one runpath would be sufficient for multiple/all
+-- libraries.
 link :: GhcLink                 -- interactive or batch
      -> DynFlags                -- dynamic flags
      -> Bool                    -- attempt linking in batch mode?
@@ -1769,9 +1818,12 @@ linkBinary' staticLink dflags o_files dep_packages = do
 
     rc_objs <- maybeCreateManifest dflags output_fn
 
-    let link = if staticLink
-                   then SysTools.runLibtool
-                   else SysTools.runLink
+    let link dflags args | staticLink = SysTools.runLibtool dflags args
+                         | platformOS platform == OSDarwin
+                            = SysTools.runLink dflags args >> SysTools.runInjectRPaths dflags pkg_lib_paths output_fn
+                         | otherwise
+                            = SysTools.runLink dflags args
+
     link dflags (
                        map SysTools.Option verbFlags
                       ++ [ SysTools.Option "-o"
@@ -1838,7 +1890,13 @@ linkBinary' staticLink dflags o_files dep_packages = do
                       ++ pkg_link_opts
                       ++ pkg_framework_opts
                       ++ (if platformOS platform == OSDarwin
-                          then [ "-Wl,-dead_strip_dylibs" ]
+                          --  dead_strip_dylibs, will remove unused dylibs, and thus save
+                          --  space in the load commands. The -headerpad is necessary so
+                          --  that we can inject more @rpath's later for the left over
+                          --  libraries during runInjectRpaths phase.
+                          --
+                          --  See Note [Dynamic linking on macOS].
+                          then [ "-Wl,-dead_strip_dylibs", "-Wl,-headerpad,8000" ]
                           else [])
                     ))
 
@@ -2119,6 +2177,23 @@ We must enable bigobj output in a few places:
 
 Unfortunately the big object format is not supported on 32-bit targets so
 none of this can be used in that case.
+
+
+Note [Merging object files for GHCi]
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+GHCi can usually loads standard linkable object files using GHC's linker
+implementation. However, most users build their projects with -split-sections,
+meaning that such object files can have an extremely high number of sections.
+As the linker must map each of these sections individually, loading such object
+files is very inefficient.
+
+To avoid this inefficiency, we use the linker's `-r` flag and a linker script
+to produce a merged relocatable object file. This file will contain a singe
+text section section and can consequently be mapped far more efficiently. As
+gcc tends to do unpredictable things to our linker command line, we opt to
+invoke ld directly in this case, in contrast to our usual strategy of linking
+via gcc.
+
 -}
 
 joinObjectFiles :: DynFlags -> [FilePath] -> FilePath -> IO ()
@@ -2126,34 +2201,13 @@ joinObjectFiles dflags o_files output_fn = do
   let toolSettings' = toolSettings dflags
       ldIsGnuLd = toolSettings_ldIsGnuLd toolSettings'
       osInfo = platformOS (targetPlatform dflags)
-      ld_r args cc = SysTools.runLink dflags ([
-                       SysTools.Option "-nostdlib",
-                       SysTools.Option "-Wl,-r"
-                     ]
-                        -- See Note [No PIE while linking] in DynFlags
-                     ++ (if toolSettings_ccSupportsNoPie toolSettings'
-                          then [SysTools.Option "-no-pie"]
-                          else [])
-
-                     ++ (if any (cc ==) [Clang, AppleClang, AppleClang51]
-                          then []
-                          else [SysTools.Option "-nodefaultlibs"])
-                     ++ (if osInfo == OSFreeBSD
-                          then [SysTools.Option "-L/usr/lib"]
-                          else [])
-                        -- gcc on sparc sets -Wl,--relax implicitly, but
-                        -- -r and --relax are incompatible for ld, so
-                        -- disable --relax explicitly.
-                     ++ (if platformArch (targetPlatform dflags)
-                                `elem` [ArchSPARC, ArchSPARC64]
-                         && ldIsGnuLd
-                            then [SysTools.Option "-Wl,-no-relax"]
-                            else [])
+      ld_r args = SysTools.runMergeObjects dflags (
                         -- See Note [Produce big objects on Windows]
-                     ++ [ SysTools.Option "-Wl,--oformat,pe-bigobj-x86-64"
-                        | OSMinGW32 == osInfo
-                        , not $ target32Bit (targetPlatform dflags)
-                        ]
+                        concat
+                          [ [SysTools.Option "--oformat", SysTools.Option "pe-bigobj-x86-64"]
+                          | OSMinGW32 == osInfo
+                          , not $ target32Bit (targetPlatform dflags)
+                          ]
                      ++ map SysTools.Option ld_build_id
                      ++ [ SysTools.Option "-o",
                           SysTools.FileOption "" output_fn ]
@@ -2162,25 +2216,24 @@ joinObjectFiles dflags o_files output_fn = do
       -- suppress the generation of the .note.gnu.build-id section,
       -- which we don't need and sometimes causes ld to emit a
       -- warning:
-      ld_build_id | toolSettings_ldSupportsBuildId toolSettings' = ["-Wl,--build-id=none"]
+      ld_build_id | toolSettings_ldSupportsBuildId toolSettings' = ["--build-id=none"]
                   | otherwise                     = []
 
-  ccInfo <- getCompilerInfo dflags
   if ldIsGnuLd
      then do
           script <- newTempName dflags TFL_CurrentModule "ldscript"
           cwd <- getCurrentDirectory
           let o_files_abs = map (\x -> "\"" ++ (cwd </> x) ++ "\"") o_files
           writeFile script $ "INPUT(" ++ unwords o_files_abs ++ ")"
-          ld_r [SysTools.FileOption "" script] ccInfo
+          ld_r [SysTools.FileOption "" script]
      else if toolSettings_ldSupportsFilelist toolSettings'
      then do
           filelist <- newTempName dflags TFL_CurrentModule "filelist"
           writeFile filelist $ unlines o_files
-          ld_r [SysTools.Option "-Wl,-filelist",
-                SysTools.FileOption "-Wl," filelist] ccInfo
+          ld_r [SysTools.Option "-filelist",
+                SysTools.FileOption "" filelist]
      else do
-          ld_r (map (SysTools.FileOption "") o_files) ccInfo
+          ld_r (map (SysTools.FileOption "") o_files)
 
 -- -----------------------------------------------------------------------------
 -- Misc.

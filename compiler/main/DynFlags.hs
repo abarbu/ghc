@@ -106,6 +106,7 @@ module DynFlags (
         sPgm_c,
         sPgm_a,
         sPgm_l,
+        sPgm_lm,
         sPgm_dll,
         sPgm_T,
         sPgm_windres,
@@ -124,6 +125,7 @@ module DynFlags (
         sOpt_cxx,
         sOpt_a,
         sOpt_l,
+        sOpt_lm,
         sOpt_windres,
         sOpt_lo,
         sOpt_lc,
@@ -152,10 +154,10 @@ module DynFlags (
         ghcUsagePath, ghciUsagePath, topDir, tmpDir,
         versionedAppDir, versionedFilePath,
         extraGccViaCFlags, systemPackageConfig,
-        pgm_L, pgm_P, pgm_F, pgm_c, pgm_a, pgm_l, pgm_dll, pgm_T,
-        pgm_windres, pgm_libtool, pgm_ar, pgm_ranlib, pgm_lo, pgm_lc,
-        pgm_lcc, pgm_i,
-        opt_L, opt_P, opt_F, opt_c, opt_cxx, opt_a, opt_l, opt_i,
+        pgm_L, pgm_P, pgm_F, pgm_c, pgm_a, pgm_l, pgm_lm, pgm_dll, pgm_T,
+        pgm_windres, pgm_libtool, pgm_ar, pgm_otool, pgm_install_name_tool,
+        pgm_ranlib, pgm_lo, pgm_lc, pgm_lcc, pgm_i,
+        opt_L, opt_P, opt_F, opt_c, opt_cxx, opt_a, opt_l, opt_lm, opt_i,
         opt_P_signature,
         opt_windres, opt_lo, opt_lc, opt_lcc,
         tablesNextToCode,
@@ -656,7 +658,7 @@ data GeneralFlag
    | Opt_SingleLibFolder
    | Opt_KeepCAFs
    | Opt_KeepGoing
-   | Opt_ByteCode
+   | Opt_ByteCodeIfUnboxed
 
    -- output style opts
    | Opt_ErrorSpans -- Include full span info in error messages,
@@ -1447,6 +1449,8 @@ pgm_a                 :: DynFlags -> (String,[Option])
 pgm_a dflags = toolSettings_pgm_a $ toolSettings dflags
 pgm_l                 :: DynFlags -> (String,[Option])
 pgm_l dflags = toolSettings_pgm_l $ toolSettings dflags
+pgm_lm                 :: DynFlags -> (String,[Option])
+pgm_lm dflags = toolSettings_pgm_lm $ toolSettings dflags
 pgm_dll               :: DynFlags -> (String,[Option])
 pgm_dll dflags = toolSettings_pgm_dll $ toolSettings dflags
 pgm_T                 :: DynFlags -> String
@@ -1459,6 +1463,10 @@ pgm_lcc               :: DynFlags -> (String,[Option])
 pgm_lcc dflags = toolSettings_pgm_lcc $ toolSettings dflags
 pgm_ar                :: DynFlags -> String
 pgm_ar dflags = toolSettings_pgm_ar $ toolSettings dflags
+pgm_otool             :: DynFlags -> String
+pgm_otool dflags = toolSettings_pgm_otool $ toolSettings dflags
+pgm_install_name_tool :: DynFlags -> String
+pgm_install_name_tool dflags = toolSettings_pgm_install_name_tool $ toolSettings dflags
 pgm_ranlib            :: DynFlags -> String
 pgm_ranlib dflags = toolSettings_pgm_ranlib $ toolSettings dflags
 pgm_lo                :: DynFlags -> (String,[Option])
@@ -1493,6 +1501,8 @@ opt_a dflags= toolSettings_opt_a $ toolSettings dflags
 opt_l                 :: DynFlags -> [String]
 opt_l dflags = concatMap (wayOptl (targetPlatform dflags)) (ways dflags)
             ++ toolSettings_opt_l (toolSettings dflags)
+opt_lm                :: DynFlags -> [String]
+opt_lm dflags= toolSettings_opt_lm $ toolSettings dflags
 opt_windres           :: DynFlags -> [String]
 opt_windres dflags= toolSettings_opt_windres $ toolSettings dflags
 opt_lcc                :: DynFlags -> [String]
@@ -3054,6 +3064,8 @@ dynamic_flags_deps = [
       $ hasArg $ \f -> alterToolSettings $ \s -> s { toolSettings_pgm_lo  = (f,[]) }
   , make_ord_flag defFlag "pgmlc"
       $ hasArg $ \f -> alterToolSettings $ \s -> s { toolSettings_pgm_lc  = (f,[]) }
+  , make_ord_flag defFlag "pgmlm"
+      $ hasArg $ \f -> alterToolSettings $ \s -> s { toolSettings_pgm_lm  = (f,[]) }
   , make_ord_flag defFlag "pgmi"
       $ hasArg $ \f -> alterToolSettings $ \s -> s { toolSettings_pgm_i   =  f }
   , make_ord_flag defFlag "pgmL"
@@ -3069,6 +3081,8 @@ dynamic_flags_deps = [
            -- (see #15319)
            toolSettings_ccSupportsNoPie = False
          }
+  , make_ord_flag defFlag "pgmc-supports-no-pie"
+      $ noArg $ alterToolSettings $ \s -> s { toolSettings_ccSupportsNoPie = True }
   , make_ord_flag defFlag "pgms"
       (HasArg (\_ -> addWarn "Object splitting was removed in GHC 8.8"))
   , make_ord_flag defFlag "pgma"
@@ -3083,11 +3097,17 @@ dynamic_flags_deps = [
       $ hasArg $ \f -> alterToolSettings $ \s -> s { toolSettings_pgm_libtool = f }
   , make_ord_flag defFlag "pgmar"
       $ hasArg $ \f -> alterToolSettings $ \s -> s { toolSettings_pgm_ar = f }
+  , make_ord_flag defFlag "pgmotool"
+      $ hasArg $ \f -> alterToolSettings $ \s -> s { toolSettings_pgm_otool = f}
+  , make_ord_flag defFlag "pgminstall_name_tool"
+      $ hasArg $ \f -> alterToolSettings $ \s -> s { toolSettings_pgm_install_name_tool = f}
   , make_ord_flag defFlag "pgmranlib"
       $ hasArg $ \f -> alterToolSettings $ \s -> s { toolSettings_pgm_ranlib = f }
 
 
     -- need to appear before -optl/-opta to be parsed as LLVM flags.
+  , make_ord_flag defFlag "optlm"
+      $ hasArg $ \f -> alterToolSettings $ \s -> s { toolSettings_opt_lm  = f : toolSettings_opt_lm s }
   , make_ord_flag defFlag "optlo"
       $ hasArg $ \f -> alterToolSettings $ \s -> s { toolSettings_opt_lo  = f : toolSettings_opt_lo s }
   , make_ord_flag defFlag "optlc"
@@ -3761,10 +3781,10 @@ dynamic_flags_deps = [
 
   , make_ord_flag defFlag "fno-code"         (NoArg ((upd $ \d ->
                   d { ghcLink=NoLink }) >> setTarget HscNothing))
-  , make_ord_flag defFlag "fbyte-code"
-      (noArgM $ \dflags -> do
-        setTarget HscInterpreted
-        pure $ gopt_set dflags Opt_ByteCode)
+  , make_ord_flag defFlag "fbyte-code"       (NoArg ((upd $ \d ->
+      -- Enabling Opt_ByteCodeIfUnboxed is a workaround for #18955.
+      -- See the comments for resetOptByteCodeIfUnboxed for more details.
+      gopt_set d Opt_ByteCodeIfUnboxed) >> setTarget HscInterpreted))
   , make_ord_flag defFlag "fobject-code"     $ NoArg $ do
       dflags <- liftEwM getCmdLineState
       setTarget $ defaultObjectTarget dflags
@@ -4583,7 +4603,6 @@ defaultFlags settings
       Opt_OmitYields,
       Opt_PrintBindContents,
       Opt_ProfCountEntries,
-      Opt_RPath,
       Opt_SharedImplib,
       Opt_SimplPreInlining,
       Opt_VersionMacros
@@ -4593,6 +4612,8 @@ defaultFlags settings
              -- The default -O0 options
 
     ++ default_PIC platform
+
+    ++ default_RPath platform
 
     ++ concatMap (wayGeneralFlags platform) (defaultWays settings)
     ++ validHoleFitDefaults
@@ -4633,6 +4654,29 @@ default_PIC platform =
                                          -- #10597 for more
                                          -- information.
     _                      -> []
+
+
+-- We usually want to use RPath, except on macOS (OSDarwin).  On recent macOS
+-- versions the number of load commands we can embed in a dynamic library is
+-- restricted.  Hence since b592bd98ff2 we rely on -dead_strip_dylib to only
+-- link the needed dylibs instead of linking the full dependency closure.
+--
+-- If we split the library linking into injecting -rpath and -l @rpath/...
+-- components, we will reduce the number of libraries we link, however we will
+-- still inject one -rpath entry for each library, independent of their use.
+-- That is, we even inject -rpath values for libraries that we dead_strip in
+-- the end. As such we can run afoul of the load command size limit simply
+-- by polluting the load commands with RPATH entries.
+--
+-- Thus, we disable Opt_RPath by default on OSDarwin.  The savvy user can always
+-- enable it with -use-rpath if they so wish.
+--
+-- See Note [Dynamic linking on macOS]
+
+default_RPath :: Platform -> [GeneralFlag]
+default_RPath platform | platformOS platform == OSDarwin = []
+default_RPath _                                          = [Opt_RPath]
+
 
 -- General flags that are switched on/off when other general flags are switched
 -- on

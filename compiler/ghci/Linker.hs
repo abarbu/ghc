@@ -913,20 +913,22 @@ dynLoadObjs hsc_env pls@PersistentLinkerState{..} objs = do
                       ldInputs =
                            concatMap (\l -> [ Option ("-l" ++ l) ])
                                      (nub $ snd <$> temp_sos)
-                        ++ concatMap (\lp -> [ Option ("-L" ++ lp)
-                                                    , Option "-Xlinker"
-                                                    , Option "-rpath"
-                                                    , Option "-Xlinker"
-                                                    , Option lp ])
+                        ++ concatMap (\lp -> Option ("-L" ++ lp)
+                                          : if gopt Opt_RPath dflags
+                                            then [ Option "-Xlinker"
+                                                 , Option "-rpath"
+                                                 , Option "-Xlinker"
+                                                 , Option lp ]
+                                            else [])
                                      (nub $ fst <$> temp_sos)
                         ++ concatMap
-                             (\lp ->
-                                 [ Option ("-L" ++ lp)
-                                 , Option "-Xlinker"
-                                 , Option "-rpath"
-                                 , Option "-Xlinker"
-                                 , Option lp
-                                 ])
+                             (\lp -> Option ("-L" ++ lp)
+                                  : if gopt Opt_RPath dflags
+                                    then [ Option "-Xlinker"
+                                         , Option "-rpath"
+                                         , Option "-Xlinker"
+                                         , Option lp ]
+                                    else [])
                              minus_big_ls
                         -- See Note [-Xlinker -rpath vs -Wl,-rpath]
                         ++ map (\l -> Option ("-l" ++ l)) minus_ls,
@@ -1132,14 +1134,15 @@ unload_wkr hsc_env keep_linkables pls@PersistentLinkerState{..}  = do
   where
     unloadObjs :: Linkable -> IO ()
     unloadObjs lnk
+        -- The RTS's PEi386 linker currently doesn't support unloading.
+      | isWindowsHost = return ()
+
       | dynamicGhc = return ()
         -- We don't do any cleanup when linking objects with the
         -- dynamic linker.  Doing so introduces extra complexity for
         -- not much benefit.
 
-      -- Code unloading currently disabled due to instability.
-      -- See #16841.
-      | False -- otherwise
+      | otherwise
       = mapM_ (unloadObj hsc_env) [f | DotO f <- linkableUnlinked lnk]
                 -- The components of a BCO linkable may contain
                 -- dot-o files.  Which is very confusing.
@@ -1147,7 +1150,6 @@ unload_wkr hsc_env keep_linkables pls@PersistentLinkerState{..}  = do
                 -- But the BCO parts can be unlinked just by
                 -- letting go of them (plus of course depopulating
                 -- the symbol table which is done in the main body)
-      | otherwise = return () -- see #16841
 
 {- **********************************************************************
 
@@ -1677,6 +1679,38 @@ addEnvPaths name list
 -- ----------------------------------------------------------------------------
 -- Loading a dynamic library (dlopen()-ish on Unix, LoadLibrary-ish on Win32)
 
+{-
+Note [macOS Big Sur dynamic libraries]
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+macOS Big Sur makes the following change to how frameworks are shipped
+with the OS:
+
+> New in macOS Big Sur 11 beta, the system ships with a built-in
+> dynamic linker cache of all system-provided libraries.  As part of
+> this change, copies of dynamic libraries are no longer present on
+> the filesystem.  Code that attempts to check for dynamic library
+> presence by looking for a file at a path or enumerating a directory
+> will fail.  Instead, check for library presence by attempting to
+> dlopen() the path, which will correctly check for the library in the
+> cache. (62986286)
+
+(https://developer.apple.com/documentation/macos-release-notes/macos-big-sur-11-beta-release-notes/)
+
+Therefore, the previous method of checking whether a library exists
+before attempting to load it makes GHC.Runtime.Linker.loadFramework
+fail to find frameworks installed at /System/Library/Frameworks.
+Instead, any attempt to load a framework at runtime, such as by
+passing -framework OpenGL to runghc or running code loading such a
+framework with GHCi, fails with a 'not found' message.
+
+GHC.Runtime.Linker.loadFramework now opportunistically loads the
+framework libraries without checking for their existence first,
+failing only if all attempts to load a given framework from any of the
+various possible locations fail.  See also #18446, which this change
+addresses.
+-}
+
 -- Darwin / MacOS X only: load a framework
 -- a framework is a dynamic library packaged inside a directory of the same
 -- name. They are searched for in different paths than normal libraries.
@@ -1687,16 +1721,28 @@ loadFramework hsc_env extraPaths rootname
                                   Left _ -> []
                                   Right dir -> [dir </> "Library/Frameworks"]
               ps = extraPaths ++ homeFrameworkPath ++ defaultFrameworkPaths
-        ; mb_fwk <- findFile ps fwk_file
-        ; case mb_fwk of
-            Just fwk_path -> loadDLL hsc_env fwk_path
-            Nothing       -> return (Just "not found") }
-                -- Tried all our known library paths, but dlopen()
-                -- has no built-in paths for frameworks: give up
+        ; errs <- findLoadDLL ps []
+        ; return $ fmap (intercalate ", ") errs
+        }
    where
      fwk_file = rootname <.> "framework" </> rootname
-        -- sorry for the hardcoded paths, I hope they won't change anytime soon:
+
+     -- sorry for the hardcoded paths, I hope they won't change anytime soon:
      defaultFrameworkPaths = ["/Library/Frameworks", "/System/Library/Frameworks"]
+
+     -- Try to call loadDLL for each candidate path.
+     --
+     -- See Note [macOS Big Sur dynamic libraries]
+     findLoadDLL [] errs =
+       -- Tried all our known library paths, but dlopen()
+       -- has no built-in paths for frameworks: give up
+       return $ Just errs
+     findLoadDLL (p:ps) errs =
+       do { dll <- loadDLL hsc_env (p </> fwk_file)
+          ; case dll of
+              Nothing  -> return Nothing
+              Just err -> findLoadDLL ps ((p ++ ": " ++ err):errs)
+          }
 
 {- **********************************************************************
 

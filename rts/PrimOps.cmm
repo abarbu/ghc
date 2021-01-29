@@ -233,6 +233,22 @@ stg_shrinkSmallMutableArrayzh ( gcptr mba, W_ new_size )
 
    OVERWRITING_CLOSURE_OFS(mba, (BYTES_TO_WDS(SIZEOF_StgSmallMutArrPtrs) +
                                  new_size));
+
+   IF_NONMOVING_WRITE_BARRIER_ENABLED {
+     // Ensure that the elements we are about to shrink out of existence
+     // remain visible to the non-moving collector.
+     W_ p, end;
+     p = mba + SIZEOF_StgSmallMutArrPtrs + WDS(new_size);
+     end = mba + SIZEOF_StgSmallMutArrPtrs + WDS(StgSmallMutArrPtrs_ptrs(mba));
+again:
+     ccall updateRemembSetPushClosure_(BaseReg "ptr",
+                                       W_[p] "ptr");
+     if (p < end) {
+       p = p + SIZEOF_W;
+       goto again;
+     }
+   }
+
    StgSmallMutArrPtrs_ptrs(mba) = new_size;
    // See the comments in overwritingClosureOfs for an explanation
    // of the interaction with LDV profiling.
@@ -1816,9 +1832,16 @@ loop:
     // There are readMVar/takeMVar(s) waiting: wake up the first one
 
     tso = StgMVarTSOQueue_tso(q);
-    StgMVar_head(mvar) = StgMVarTSOQueue_link(q);
-    if (StgMVar_head(mvar) == stg_END_TSO_QUEUE_closure) {
+    q = StgMVarTSOQueue_link(q);
+    StgMVar_head(mvar) = q;
+    if (q == stg_END_TSO_QUEUE_closure) {
         StgMVar_tail(mvar) = stg_END_TSO_QUEUE_closure;
+    } else {
+        if (info == stg_MVAR_CLEAN_info) {
+            // Resolve #18919.
+            ccall dirty_MVAR(BaseReg "ptr", mvar "ptr",
+                             StgMVar_value(mvar) "ptr");
+        }
     }
 
     ASSERT(StgTSO_block_info(tso) == mvar);
@@ -1843,10 +1866,8 @@ loop:
 
     // If it was a readMVar, then we can still do work,
     // so loop back. (XXX: This could take a while)
-    if (why_blocked == BlockedOnMVarRead) {
-        q = StgMVarTSOQueue_link(q);
+    if (why_blocked == BlockedOnMVarRead)
         goto loop;
-    }
 
     ASSERT(why_blocked == BlockedOnMVar);
 
@@ -1901,9 +1922,16 @@ loop:
     // There are takeMVar(s) waiting: wake up the first one
 
     tso = StgMVarTSOQueue_tso(q);
-    StgMVar_head(mvar) = StgMVarTSOQueue_link(q);
-    if (StgMVar_head(mvar) == stg_END_TSO_QUEUE_closure) {
+    q = StgMVarTSOQueue_link(q);
+    StgMVar_head(mvar) = q;
+    if (q == stg_END_TSO_QUEUE_closure) {
         StgMVar_tail(mvar) = stg_END_TSO_QUEUE_closure;
+    } else {
+        if (info == stg_MVAR_CLEAN_info) {
+            // Resolve #18919.
+            ccall dirty_MVAR(BaseReg "ptr", mvar "ptr",
+                             StgMVar_value(mvar) "ptr");
+        }
     }
 
     ASSERT(StgTSO_block_info(tso) == mvar);
@@ -1928,10 +1956,8 @@ loop:
 
     // If it was a readMVar, then we can still do work,
     // so loop back. (XXX: This could take a while)
-    if (why_blocked == BlockedOnMVarRead) {
-        q = StgMVarTSOQueue_link(q);
+    if (why_blocked == BlockedOnMVarRead)
         goto loop;
-    }
 
     ASSERT(why_blocked == BlockedOnMVar);
 

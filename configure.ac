@@ -13,7 +13,7 @@ dnl
 # see what flags are available. (Better yet, read the documentation!)
 #
 
-AC_INIT([The Glorious Glasgow Haskell Compilation System], [8.10.2], [glasgow-haskell-bugs@haskell.org], [ghc-AC_PACKAGE_VERSION])
+AC_INIT([The Glorious Glasgow Haskell Compilation System], [8.10.3], [glasgow-haskell-bugs@haskell.org], [ghc-AC_PACKAGE_VERSION])
 
 # Set this to YES for a released version, otherwise NO
 : ${RELEASE=YES}
@@ -429,6 +429,8 @@ then
     NM="${mingwbin}nm.exe"
     RANLIB="${mingwbin}ranlib.exe"
     OBJDUMP="${mingwbin}objdump.exe"
+    MergeObjsCmd="$LD"
+    MergeObjsArgs="-r --oformat=pe-bigobj-x86-64"
     fp_prog_ar="${mingwbin}ar.exe"
 
     AC_PATH_PROG([Genlib],[genlib])
@@ -577,13 +579,12 @@ dnl ** Which ld to use
 dnl --------------------------------------------------------------
 AC_ARG_VAR(LD,[Use as the path to ld. See also --disable-ld-override.])
 FIND_LD([$target],[GccUseLdOpt])
+FIND_MERGE_OBJECTS()
 CONF_GCC_LINKER_OPTS_STAGE1="$CONF_GCC_LINKER_OPTS_STAGE1 $GccUseLdOpt"
 CONF_GCC_LINKER_OPTS_STAGE2="$CONF_GCC_LINKER_OPTS_STAGE2 $GccUseLdOpt"
 LdCmd="$LD"
-LdNoGoldCmd="$LD_NO_GOLD"
 CFLAGS="$CFLAGS $GccUseLdOpt"
 AC_SUBST([LdCmd])
-AC_SUBST([LdNoGoldCmd])
 
 FP_PROG_LD_IS_GNU
 FP_PROG_LD_BUILD_ID
@@ -669,6 +670,18 @@ else
     LibtoolCmd="$LIBTOOL"
 fi
 AC_SUBST([LibtoolCmd])
+
+dnl ** Which otool to use on macOS
+dnl --------------------------------------------------------------
+AC_CHECK_TARGET_TOOL([OTOOL], [otool])
+OtoolCmd="$OTOOL"
+AC_SUBST(OtoolCmd)
+
+dnl ** Which install_name_tool to use on macOS
+dnl --------------------------------------------------------------
+AC_CHECK_TARGET_TOOL([INSTALL_NAME_TOOL], [install_name_tool])
+InstallNameToolCmd="$INSTALL_NAME_TOOL"
+AC_SUBST(InstallNameToolCmd)
 
 # Here is where we re-target which specific version of the LLVM
 # tools we are looking for. In the past, GHC supported a number of
@@ -1480,6 +1493,8 @@ echo "\
    libtool      : $LibtoolCmd
    objdump      : $ObjdumpCmd
    ranlib       : $RanlibCmd
+   otool        : $OtoolCmd
+   install_name_tool : $InstallNameToolCmd
    windres      : $WindresCmd
    dllwrap      : $DllWrapCmd
    genlib       : $GenlibCmd

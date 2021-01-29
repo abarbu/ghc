@@ -73,6 +73,14 @@ given compilation phase:
 
     Use ⟨cmd⟩ as the linker.
 
+.. ghc-flag:: -pgmlm ⟨cmd⟩
+    :shortdesc: Use ⟨cmd⟩ as the linker when merging object files
+    :type: dynamic
+    :category: phase-programs
+
+    Use ⟨cmd⟩ as the linker when merging object files (e.g. when generating
+    joined objects for loading into GHCi).
+
 .. ghc-flag:: -pgmdll ⟨cmd⟩
     :shortdesc: Use ⟨cmd⟩ as the DLL generator
     :type: dynamic
@@ -86,6 +94,24 @@ given compilation phase:
     :category: phase-programs
 
     Use ⟨cmd⟩ as the pre-processor (with :ghc-flag:`-F` only).
+
+.. ghc-flag:: -pgmotool ⟨cmd⟩
+    :shortdesc: Use ⟨cmd⟩ as the program to inspect mach-o dylibs on macOS
+    :type: dynamic
+    :category: phase-programs
+
+    Use ⟨cmd⟩ as the program to inspect mach-o dynamic libraries and
+    executables to read the dynamic library dependencies.  We will compute
+    the necessary ``runpath``s to embed for the dependencies based on the
+    result of the ``otool`` call.
+
+.. ghc-flag:: -pgminstall_name_tool ⟨cmd⟩
+    :shortdesc: Use ⟨cmd⟩ as the program to inject ``runpath`` into mach-o dylibs on macOS
+    :type: dynamic
+    :category: phase-programs
+
+    Use ⟨cmd⟩ as the program to inject ``runpath``s into mach-o dynamic
+    libraries and executables.  As detected by the ``otool`` call.
 
 .. ghc-flag:: -pgmwindres ⟨cmd⟩
     :shortdesc: Use ⟨cmd⟩ as the program for embedding manifests on Windows.
@@ -154,6 +180,20 @@ the following flags:
 
     Pass ⟨option⟩ to the C compiler.
 
+.. ghc-flag:: -pgmc-supports-no-pie
+    :shortdesc: Indicate that the C compiler supports ``-no-pie``
+    :type: dynamic
+    :category: phase-options
+
+    When ``-pgmc`` is used, GHC by default will never pass the ``-no-pie``
+    command line flag. The rationale is that it is not known whether the
+    specified compiler will support it. This flag can be used to indicate
+    that ``-no-pie`` is supported. It has to be passed after ``-pgmc``.
+
+    This flag is not neccessary when ``-pgmc`` is not used, since GHC
+    remembers whether the default C compiler supports ``-no-pie`` in
+    an internal settings file.
+
 .. ghc-flag:: -optcxx ⟨option⟩
     :shortdesc: pass ⟨option⟩ to the C++ compiler
     :type: dynamic
@@ -188,6 +228,14 @@ the following flags:
     :category: phase-options
 
     Pass ⟨option⟩ to the linker.
+
+.. ghc-flag:: -optlm ⟨option⟩
+    :shortdesc: pass ⟨option⟩ to the linker when merging object files.
+    :type: dynamic
+    :category: phase-options
+
+    Pass ⟨option⟩ to the linker when merging object files. In the case of a
+    standard ``ld``-style linker this should generally include the ``-r`` flag.
 
 .. ghc-flag:: -optdll ⟨option⟩
     :shortdesc: pass ⟨option⟩ to the DLL generator

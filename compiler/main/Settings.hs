@@ -19,11 +19,14 @@ module Settings
   , sPgm_c
   , sPgm_a
   , sPgm_l
+  , sPgm_lm
   , sPgm_dll
   , sPgm_T
   , sPgm_windres
   , sPgm_libtool
   , sPgm_ar
+  , sPgm_otool
+  , sPgm_install_name_tool
   , sPgm_ranlib
   , sPgm_lo
   , sPgm_lc
@@ -37,6 +40,7 @@ module Settings
   , sOpt_cxx
   , sOpt_a
   , sOpt_l
+  , sOpt_lm
   , sOpt_windres
   , sOpt_lo
   , sOpt_lc
@@ -125,6 +129,8 @@ sPgm_a :: Settings -> (String, [Option])
 sPgm_a = toolSettings_pgm_a . sToolSettings
 sPgm_l :: Settings -> (String, [Option])
 sPgm_l = toolSettings_pgm_l . sToolSettings
+sPgm_lm :: Settings -> (String, [Option])
+sPgm_lm = toolSettings_pgm_lm . sToolSettings
 sPgm_dll :: Settings -> (String, [Option])
 sPgm_dll = toolSettings_pgm_dll . sToolSettings
 sPgm_T :: Settings -> String
@@ -135,6 +141,10 @@ sPgm_libtool :: Settings -> String
 sPgm_libtool = toolSettings_pgm_libtool . sToolSettings
 sPgm_ar :: Settings -> String
 sPgm_ar = toolSettings_pgm_ar . sToolSettings
+sPgm_otool :: Settings -> String
+sPgm_otool = toolSettings_pgm_otool . sToolSettings
+sPgm_install_name_tool :: Settings -> String
+sPgm_install_name_tool = toolSettings_pgm_install_name_tool . sToolSettings
 sPgm_ranlib :: Settings -> String
 sPgm_ranlib = toolSettings_pgm_ranlib . sToolSettings
 sPgm_lo :: Settings -> (String, [Option])
@@ -161,6 +171,8 @@ sOpt_a :: Settings -> [String]
 sOpt_a = toolSettings_opt_a . sToolSettings
 sOpt_l :: Settings -> [String]
 sOpt_l = toolSettings_opt_l . sToolSettings
+sOpt_lm :: Settings -> [String]
+sOpt_lm = toolSettings_opt_lm . sToolSettings
 sOpt_windres :: Settings -> [String]
 sOpt_windres = toolSettings_opt_windres . sToolSettings
 sOpt_lo :: Settings -> [String]

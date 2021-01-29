@@ -20,6 +20,7 @@
 #include "STM.h"        /* initSTM */
 #include "RtsSignals.h"
 #include "Weak.h"
+#include "ForeignExports.h"     /* processForeignExports */
 #include "Ticky.h"
 #include "StgRun.h"
 #include "Prelude.h"            /* fixupRTStoPreludeRefs */
@@ -231,6 +232,13 @@ hs_init_ghc(int *argc, char **argv[], RtsConfig rts_config)
     /* Initialise libdw session pool */
     libdwPoolInit();
 
+    /* Start the "ticker" and profiling timer but don't start until the
+     * scheduler is up. However, the ticker itself needs to be initialized
+     * before the scheduler to ensure that the ticker mutex is initialized as
+     * moreCapabilities will attempt to acquire it.
+     */
+    initTimer();
+
     /* initialise scheduler data structures (needs to be done before
      * initStorage()).
      */
@@ -287,7 +295,13 @@ hs_init_ghc(int *argc, char **argv[], RtsConfig rts_config)
     getStablePtr((StgPtr)runHandlersPtr_closure);
 #endif
 
-    // Initialize the top-level handler system
+    /*
+     * process any foreign exports which were registered while loading the
+     * image
+     * */
+    processForeignExports();
+
+    /* initialize the top-level handler system */
     initTopHandler();
 
     /* initialise the shared Typeable store */
@@ -307,7 +321,6 @@ hs_init_ghc(int *argc, char **argv[], RtsConfig rts_config)
     initHeapProfiling();
 
     /* start the virtual timer 'subsystem'. */
-    initTimer();
     startTimer();
 
 #if defined(RTS_USER_SIGNALS)
@@ -505,8 +518,8 @@ hs_exit_(bool wait_foreign)
     shutdownAsyncIO(wait_foreign);
 #endif
 
-    /* free hash table storage */
-    exitHashTable();
+    /* tear down statistics subsystem */
+    stat_exit();
 
     // Finally, free all our storage.  However, we only free the heap
     // memory if we have waited for foreign calls to complete;

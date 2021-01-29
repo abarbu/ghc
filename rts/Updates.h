@@ -49,7 +49,6 @@
     W_ bd;                                                      \
                                                                 \
     prim_write_barrier;                                         \
-    OVERWRITING_CLOSURE(p1);                                    \
     bd = Bdescr(p1);                                            \
     if (bdescr_gen_no(bd) != 0 :: bits16) {                     \
       IF_NONMOVING_WRITE_BARRIER_ENABLED {                      \
@@ -60,6 +59,7 @@
     } else {                                                    \
       TICK_UPD_NEW_IND();                                       \
     }                                                           \
+    OVERWRITING_CLOSURE(p1);                                    \
     StgInd_indirectee(p1) = p2;                                 \
     prim_write_barrier;                                         \
     SET_INFO(p1, stg_BLACKHOLE_info);                           \
@@ -76,7 +76,6 @@ INLINE_HEADER void updateWithIndirection (Capability *cap,
     /* not necessarily true: ASSERT( !closure_IND(p1) ); */
     /* occurs in RaiseAsync.c:raiseAsync() */
     /* See Note [Heap memory barriers] in SMP.h */
-    write_barrier();
     bdescr *bd = Bdescr((StgPtr)p1);
     if (bd->gen_no != 0) {
       IF_NONMOVING_WRITE_BARRIER_ENABLED {
@@ -88,9 +87,8 @@ INLINE_HEADER void updateWithIndirection (Capability *cap,
         TICK_UPD_NEW_IND();
     }
     OVERWRITING_CLOSURE(p1);
-    ((StgInd *)p1)->indirectee = p2;
-    write_barrier();
-    SET_INFO(p1, &stg_BLACKHOLE_info);
+    RELEASE_STORE(&((StgInd *)p1)->indirectee, p2);
+    SET_INFO_RELEASE(p1, &stg_BLACKHOLE_info);
     LDV_RECORD_CREATE(p1);
 }
 

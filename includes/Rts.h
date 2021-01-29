@@ -190,6 +190,7 @@ void _assertFail(const char *filename, unsigned int linenum)
 
 /* Parallel information */
 #include "rts/OSThreads.h"
+#include "rts/TSANUtils.h"
 #include "rts/SpinLock.h"
 
 #include "rts/Messages.h"
@@ -208,6 +209,9 @@ void _assertFail(const char *filename, unsigned int linenum)
 #include "rts/storage/MBlock.h"
 #include "rts/storage/GC.h"
 #include "rts/NonMoving.h"
+
+/* Foreign exports */
+#include "rts/ForeignExports.h"
 
 /* Other RTS external APIs */
 #include "rts/Parallel.h"

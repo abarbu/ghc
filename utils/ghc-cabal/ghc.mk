@@ -23,9 +23,9 @@ CABAL_CONSTRAINT := --constraint="Cabal == $(CABAL_DOTTED_VERSION)"
 # macros is triggered by `-hide-all-packages`, so we have to explicitly
 # enumerate all packages we need in scope.
 ifeq "$(Windows_Host)" "YES"
-CABAL_BUILD_DEPS := ghc-prim base array transformers time containers bytestring deepseq process pretty directory filepath Win32
+CABAL_BUILD_DEPS := ghc-prim base array transformers time containers bytestring deepseq process pretty directory filepath Win32 template-haskell
 else
-CABAL_BUILD_DEPS := ghc-prim base array transformers time containers bytestring deepseq process pretty directory filepath unix
+CABAL_BUILD_DEPS := ghc-prim base array transformers time containers bytestring deepseq process pretty directory filepath unix template-haskell
 endif
 
 ghc-cabal_DIST_BINARY_NAME = ghc-cabal$(exeext0)
@@ -75,7 +75,7 @@ $(ghc-cabal_DIST_BINARY): $(CABAL_LEXER_DEP) utils/ghc-cabal/Main.hs $(TOUCH_DEP
 	       -ilibraries/filepath \
 	       -ilibraries/hpc \
 	       -ilibraries/mtl \
-	       -ilibraries/text \
+	       -ilibraries/text/src \
 	       libraries/text/cbits/cbits.c \
 	       -Ilibraries/text/include \
 	       -ilibraries/parsec/src \

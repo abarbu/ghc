@@ -232,7 +232,7 @@ uint32_t
 throwToMsg (Capability *cap, MessageThrowTo *msg)
 {
     StgWord status;
-    StgTSO *target = msg->target;
+    StgTSO *target = ACQUIRE_LOAD(&msg->target);
     Capability *target_cap;
 
     goto check_target;
@@ -245,8 +245,9 @@ check_target:
     ASSERT(target != END_TSO_QUEUE);
 
     // Thread already dead?
-    if (target->what_next == ThreadComplete
-        || target->what_next == ThreadKilled) {
+    StgWord16 what_next = SEQ_CST_LOAD(&target->what_next);
+    if (what_next == ThreadComplete
+        || what_next == ThreadKilled) {
         return THROWTO_SUCCESS;
     }
 
@@ -335,7 +336,7 @@ check_target:
         }
 
         // nobody else can wake up this TSO after we claim the message
-        doneWithMsgThrowTo(m);
+        doneWithMsgThrowTo(cap, m);
 
         raiseAsync(cap, target, msg->exception, false, NULL);
         return THROWTO_SUCCESS;
@@ -576,7 +577,7 @@ maybePerformBlockedException (Capability *cap, StgTSO *tso)
 
         throwToSingleThreaded(cap, msg->target, msg->exception);
         source = msg->source;
-        doneWithMsgThrowTo(msg);
+        doneWithMsgThrowTo(cap, msg);
         tryWakeupThread(cap, source);
         return 1;
     }
@@ -598,7 +599,7 @@ awakenBlockedExceptionQueue (Capability *cap, StgTSO *tso)
         i = lockClosure((StgClosure *)msg);
         if (i != &stg_MSG_NULL_info) {
             source = msg->source;
-            doneWithMsgThrowTo(msg);
+            doneWithMsgThrowTo(cap, msg);
             tryWakeupThread(cap, source);
         } else {
             unlockClosure((StgClosure *)msg,i);
@@ -695,7 +696,7 @@ removeFromQueues(Capability *cap, StgTSO *tso)
       // ASSERT(m->header.info == &stg_WHITEHOLE_info);
 
       // unlock and revoke it at the same time
-      doneWithMsgThrowTo(m);
+      doneWithMsgThrowTo(cap, m);
       break;
   }
 
@@ -984,7 +985,7 @@ raiseAsync(Capability *cap, StgTSO *tso, StgClosure *exception,
             sp[0] = (W_)raise;
             sp[-1] = (W_)&stg_enter_info;
             stack->sp = sp-1;
-            tso->what_next = ThreadRunGHC;
+            RELAXED_STORE(&tso->what_next, ThreadRunGHC);
             goto done;
         }
 

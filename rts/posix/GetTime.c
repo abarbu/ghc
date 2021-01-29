@@ -71,8 +71,7 @@ Time getCurrentThreadCPUTime(void)
     // support clock_getcpuclockid. Hence we prefer to use the Darwin-specific
     // path on Darwin, even if clock_gettime is available.
 #if defined(darwin_HOST_OS)
-    mach_port_t port = pthread_mach_thread_np(osThreadId());
-    thread_basic_info_data_t info = { 0 };
+    thread_basic_info_data_t info = { };
     mach_msg_type_number_t info_count = THREAD_BASIC_INFO_COUNT;
     kern_return_t kern_err = thread_info(mach_thread_self(), THREAD_BASIC_INFO,
                                          (thread_info_t) &info, &info_count);
@@ -86,7 +85,9 @@ Time getCurrentThreadCPUTime(void)
        defined(CLOCK_PROCESS_CPUTIME_ID) &&  \
        defined(HAVE_SYSCONF)
     static bool have_checked_usability = false;
-    if (!have_checked_usability) {
+    // The RELAXED operation is fine here as it's okay if we do the check below
+    // more than once.
+    if (!RELAXED_LOAD(&have_checked_usability)) {
         // The Linux clock_getres(2) manpage claims that some early versions of
         // Linux will return values which are uninterpretable in the presence
         // of migration across CPUs. They claim that clock_getcpuclockid(0)
@@ -96,7 +97,7 @@ Time getCurrentThreadCPUTime(void)
             sysErrorBelch("getCurrentThreadCPUTime: no supported");
             stg_exit(EXIT_FAILURE);
         }
-        have_checked_usability = true;
+        RELAXED_STORE(&have_checked_usability, true);
     }
     return getClockTime(CLOCK_THREAD_CPUTIME_ID);
 #else
